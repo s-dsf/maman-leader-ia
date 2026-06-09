@@ -1,0 +1,12 @@
+crewai
+anthropic
+python-dotenv
+streamlit
+chromadb
+pypdf
+python-docx
+openpyxl
+openai
+Pillow
+requests
+notion-client
