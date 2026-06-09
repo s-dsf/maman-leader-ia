@@ -5,4 +5,4 @@ historique/
 documents/
 __pycache__/
 *.pyc
-*.png
+documents/*.png
