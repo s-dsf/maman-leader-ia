@@ -31,37 +31,8 @@ def charger_image(key):
     return None
 
 def chat_avec_agent(agent_key, message, prompts):
-    from crewai import Agent, Task, Crew, LLM
-    from rag import rechercher
-    if agent_key in prompts and agent_key != "agents_custom":
-        p = prompts[agent_key]
-    else:
-        p = next((a for a in prompts.get("agents_custom", [])
-                  if a["id"] == agent_key), None)
-        if not p:
-            return "Agent introuvable."
-    rag_ctx = rechercher(message, n=3)
-    backstory = p["backstory"]
-    if rag_ctx:
-        backstory += f"\n\nRÉFÉRENCES MAISON :\n{rag_ctx}"
-    claude = LLM(
-        model="anthropic/claude-sonnet-4-6",
-        api_key=os.getenv("ANTHROPIC_API_KEY")
-    )
-    agent = Agent(
-        role=p["role"],
-        goal="Répondre avec expertise dans ton domaine exclusif",
-        backstory=backstory,
-        verbose=False,
-        llm=claude
-    )
-    task = Task(
-        description=message,
-        agent=agent,
-        expected_output="Réponse structurée, professionnelle, alignée avec Maman & Leader"
-    )
-    crew = Crew(agents=[agent], tasks=[task], verbose=False)
-    return str(crew.kickoff())
+    from agent_direct import lancer_agent as _lancer
+    return _lancer(agent_key, message, prompts)
 
 # ── CSS ──────────────────────────────────────────────────
 st.markdown("""

@@ -41,33 +41,8 @@ def sauvegarder_livrable(titre, type_mission, resultat):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def lancer_agent(role_key, instruction, prompts, contexte=""):
-    from crewai import Agent, Task, Crew, LLM
-    from rag import rechercher
-    p = prompts[role_key]
-    rag_ctx = rechercher(instruction, n=3)
-    backstory = p["backstory"]
-    if rag_ctx:
-        backstory += f"\n\nRÉFÉRENCES MAISON :\n{rag_ctx}"
-    claude = LLM(
-        model="anthropic/claude-sonnet-4-6",
-        api_key=os.getenv("ANTHROPIC_API_KEY")
-    )
-    agent = Agent(
-        role=p["role"],
-        goal="Produire un livrable premium aligné Maman & Leader",
-        backstory=backstory,
-        verbose=False,
-        llm=claude
-    )
-    desc = f"{contexte}\n\n{instruction}" if contexte else instruction
-    task = Task(
-        description=desc,
-        agent=agent,
-        expected_output="Livrable structuré, professionnel, aligné Maman & Leader"
-    )
-    crew = Crew(agents=[agent], tasks=[task], verbose=False)
-    return str(crew.kickoff())
-
+    from agent_direct import lancer_agent as _lancer
+    return _lancer(role_key, instruction, prompts, contexte)
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,500;1,400&display=swap');

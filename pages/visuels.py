@@ -24,32 +24,8 @@ def charger_image(key):
     return None
 
 def lancer_agent(role_key, instruction, prompts, contexte=""):
-    from crewai import Agent, Task, Crew, LLM
-    from rag import rechercher
-    p = prompts[role_key]
-    rag_ctx = rechercher(instruction, n=3)
-    backstory = p["backstory"]
-    if rag_ctx:
-        backstory += f"\n\nREFERENCES :\n{rag_ctx}"
-    claude = LLM(
-        model="anthropic/claude-sonnet-4-6",
-        api_key=os.getenv("ANTHROPIC_API_KEY")
-    )
-    agent = Agent(
-        role=p["role"],
-        goal="Produire une direction artistique premium Maman & Leader",
-        backstory=backstory,
-        verbose=False,
-        llm=claude
-    )
-    desc = f"{contexte}\n\n{instruction}" if contexte else instruction
-    task = Task(
-        description=desc,
-        agent=agent,
-        expected_output="Direction artistique precise et actionnable"
-    )
-    crew = Crew(agents=[agent], tasks=[task], verbose=False)
-    return str(crew.kickoff())
+    from agent_direct import lancer_agent as _lancer
+    return _lancer(role_key, instruction, prompts, contexte)
 
 def generer_image_hf(prompt, format_visuel="instagram"):
     api_key = os.getenv("HUGGINGFACE_API_KEY", "")
