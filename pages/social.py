@@ -1,5 +1,5 @@
 import streamlit as st
-import os, json, datetime
+import os, json, datetime, requests, re, calendar
 from pathlib import Path
 from PIL import Image
 from dotenv import load_dotenv
@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 st.set_page_config(
-    page_title="Maman & Leader — Social",
+    page_title="Maman & Leader — Calendrier Social",
     page_icon="✦",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -23,26 +23,112 @@ def charger_image(key):
         return Image.open(chemin)
     return None
 
-def sauvegarder_livrable(titre, type_mission, resultat):
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    data = {
-        "id": ts, "titre": titre,
-        "auteur": "Maman & Leader",
-        "genre": type_mission,
-        "type_mission": type_mission,
-        "synopsis": titre,
-        "resultat": str(resultat),
-        "date": datetime.datetime.now().strftime("%d/%m/%Y a %H:%M")
-    }
-    Path("historique").mkdir(exist_ok=True)
-    with open(Path("historique") /
-              f"{ts}_{titre[:20].replace(' ','_')}.json",
-              "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
 def lancer_agent(role_key, instruction, prompts, contexte=""):
     from agent_direct import lancer_agent as _lancer
     return _lancer(role_key, instruction, prompts, contexte)
+
+def envoyer_airtable(posts):
+    token = os.getenv("AIRTABLE_TOKEN")
+    base_id = os.getenv("AIRTABLE_BASE_ID")
+    table_id = os.getenv("AIRTABLE_TABLE_ID")
+    if not token or not base_id or not table_id:
+        return False, "Cles Airtable manquantes dans .env"
+    url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    erreurs = []
+    succes = 0
+    for i in range(0, len(posts), 10):
+        batch = posts[i:i+10]
+        records = []
+        for post in batch:
+            fields = {}
+            for key in ["Date","Support","Pilier","Angle","Hook",
+                        "ContenuPost","Caption","BriefCouleur",
+                        "BriefAlignement","BriefBloc","BriefAmbiance"]:
+                if key in post:
+                    fields[key] = str(post[key])
+            fields["Statut production"] = "Fait"
+            records.append({"fields": fields})
+        try:
+            resp = requests.post(url, headers=headers,
+                                 json={"records": records}, timeout=30)
+            if resp.status_code == 200:
+                succes += len(batch)
+            else:
+                erreurs.append(f"Batch {i//10+1}: {resp.text[:200]}")
+        except Exception as e:
+            erreurs.append(str(e))
+    if erreurs:
+        return False, f"{succes} posts envoyes. Erreurs : {'; '.join(erreurs)}"
+    return True, f"{succes} posts envoyes dans Airtable"
+
+def generer_semaine(client, date_debut, date_fin, intention_data):
+    prompt = f"""
+Tu generes un calendrier editorial Instagram pour Maman & Leader.
+
+DONNEES :
+Intention marketing : {intention_data.get('Intentions marketing', '')}
+Phase marketing : {intention_data.get('Phase marketing', 'Consolidation')}
+Pilier dominant : {intention_data.get('Pilier dominant', 'A tes cotes')}
+Date debut : {date_debut}
+Date fin : {date_fin}
+
+POSITIONNEMENT :
+Maison editoriale pour femmes dirigeantes et meres.
+Leadership feminin incarne. Responsabilite sans durete.
+Structure sans rigidite. Douceur sans effacement.
+Ton : sobre, stable, introspectif, non injonctif.
+
+RYTHME :
+- 5 publications principales par semaine (Reel ou Carrousel)
+- Minimum 2 Reels par semaine
+- Stories quotidiennes obligatoires
+- Maximum 1 Reel par jour, 1 Carrousel par jour
+
+STRUCTURE : Une entree par jour entre {date_debut} et {date_fin} inclus.
+Chaque jour : minimum 1 Story. Publications en complement.
+
+REPARTITION : 60% Identification / 20% Conscience / 10% Stabilisation / 10% Invitation
+
+HOOKS : Courts, concrets, varies.
+Formats possibles : "Tu es celle qu'on appelle quand..." / "Ce qui fatigue vraiment..." / "5 signes que..." / "Personne ne voit..." / "Pourquoi tu es epuisee meme quand..."
+
+STRUCTURE PAR SUPPORT :
+Carrousel : Slide 1 / Slide 2 / Slide 3 / Slide 4 / Slide 5. Min 4 slides. Max 7.
+Story : Story 1 / Story 2 / Story 3 / Story 4. Min 3. Max 6.
+Reel : Plan / Texte 1 / Silence / Texte 2 / Texte final.
+
+CAPTION : Entre 400 et 600 caracteres maximum. Concise mais impactante. Mots-cles : charge mentale, maman active, fatigue decisionnelle, leadership feminin. Question ouverte en fin.
+
+VALEURS AUTORISEES UNIQUEMENT :
+Support : Reel / Story / Carrousel
+Pilier : A tes cotes / Structurer sans s'epuiser
+Angle : Identification / Conscience / Desserrage / Invitation
+
+FORMAT : Tableau JSON valide uniquement. Commence par [ termine par ].
+Aucun texte avant ou apres.
+Chaque element : Date, Support, Pilier, Angle, Hook, ContenuPost, Caption, BriefCouleur, BriefAlignement, BriefBloc, BriefAmbiance
+"""
+    msg = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=8192,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    reponse = msg.content[0].text.strip()
+    if "```" in reponse:
+        reponse = re.sub(r'```json?\s*', '', reponse)
+        reponse = re.sub(r'```', '', reponse)
+    reponse = reponse.strip()
+    start = reponse.find('[')
+    end = reponse.rfind(']') + 1
+    if start >= 0 and end > start:
+        return json.loads(reponse[start:end])
+    return json.loads(reponse)
+
+# ── CSS ──────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,500;1,400&display=swap');
@@ -57,26 +143,16 @@ h1, h2, h3 {
     font-family: 'Playfair Display', serif !important;
     color: #4A3833 !important;
 }
-.canal-card {
-    background: #FFFFFF;
-    border: 1px solid #EDD9CF;
-    border-radius: 14px;
-    padding: 20px;
-    text-align: center;
-    margin-bottom: 12px;
-}
-.canal-titre {
-    font-family: 'Playfair Display', serif;
-    font-size: 18px;
-    font-weight: 600;
-    color: #4A3833;
-    margin-bottom: 4px;
-}
-.canal-desc {
+.badge-support {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 11px;
     font-family: 'Lora', serif;
-    font-size: 12px;
-    color: #8C5A49;
-    font-style: italic;
+    margin-right: 4px;
+    background: #FAEAE3;
+    color: #C77A5C;
+    border: 1px solid #EDD9CF;
 }
 .stButton > button {
     font-family: 'Lora', serif !important;
@@ -102,260 +178,239 @@ if st.button("← Hub"):
 st.markdown("""
 <div style="font-family:'Playfair Display',serif;font-size:32px;
             font-weight:700;color:#4A3833;margin-bottom:4px;">
-    Contenus Social
+    Calendrier Social Mensuel
 </div>
 <div style="font-family:'Lora',serif;font-size:14px;color:#8C5A49;
             font-style:italic;margin-bottom:24px;">
-    Instagram — relation et presence · Pinterest — acquisition et croissance
+    La Directrice Marketing definit l'intention — le calendrier est genere automatiquement
 </div>
 """, unsafe_allow_html=True)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 
-col_ig, col_pi = st.columns(2)
-with col_ig:
-    st.markdown("""
-    <div class="canal-card">
-        <div class="canal-titre">Instagram</div>
-        <div class="canal-desc">
-            Espace de relation — nourrir la reconnaissance
-            emotionnelle, construire la confiance, incarner
-            le positionnement dans la duree.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col_pi:
-    st.markdown("""
-    <div class="canal-card">
-        <div class="canal-titre">Pinterest</div>
-        <div class="canal-desc">
-            Moteur d'acquisition — capter les femmes en phase
-            de recherche active. Indexation longue duree.
-            Croissance organique de la maison.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.markdown("<hr/>", unsafe_allow_html=True)
-
+# ── FORMULAIRE ───────────────────────────────────────────
 col1, col2 = st.columns(2)
 with col1:
-    theme = st.text_input(
-        "Theme du contenu *",
-        placeholder="ex : La delegation sereine"
-    )
-    canal = st.selectbox(
-        "Canal prioritaire *",
-        ["Instagram + Pinterest",
-         "Instagram uniquement",
-         "Pinterest uniquement"]
-    )
+    mois = st.selectbox("Mois *", [
+        "Janvier","Fevrier","Mars","Avril","Mai","Juin",
+        "Juillet","Aout","Septembre","Octobre","Novembre","Decembre"
+    ])
+    annee = st.number_input("Annee *", min_value=2025,
+                             max_value=2030,
+                             value=datetime.datetime.now().year)
 with col2:
-    pilier = st.selectbox(
-        "Pilier editorial *",
-        ["A tes cotes — apaisant, introspectif, respirant",
-         "Structurer sans s'epuiser — stable, ancre, mature"]
+    contexte_supp = st.text_area(
+        "Contexte du mois (optionnel)",
+        placeholder="Lancement ebook, evenement, periode particuliere...",
+        height=100
     )
-    nb_posts = st.slider("Nombre de posts", 1, 10, 5)
-
-phase = st.selectbox(
-    "Phase marketing *",
-    ["Installation — faire connaitre la maison",
-     "Consolidation — approfondir la relation",
-     "Stabilisation — ancrer la confiance"]
-)
-
-contexte_supp = st.text_area(
-    "Contexte supplementaire (optionnel)",
-    placeholder="Actualite, evenement, lancement en cours...",
-    height=80
-)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.markdown("### Le flux de production")
 
-etapes_social = [
-    ("marketing",  "1. Intention marketing", "Pilier dominant, angle, promesse"),
-    ("editoriale", "2. Angles et formats",   "Structure des posts, messages cles"),
-    ("redactrice", "3. Redaction",            "Captions, textes, accroches"),
-    ("da",         "4. Direction visuelle",   "Systeme visuel par post"),
-]
-
-cols_e = st.columns(4)
-for col, (key, titre, desc) in zip(cols_e, etapes_social):
+cols_f = st.columns(2)
+for col, (key, label, desc) in zip(cols_f, [
+    ("marketing", "1. Directrice Marketing",
+     "Definit intention, phase et pilier dominant du mois"),
+    ("redactrice", "2. Generation calendrier",
+     "Calendrier complet jour par jour avec hooks, captions et briefs"),
+]):
     with col:
         img = charger_image(key)
         if img:
             st.image(img, width=70)
         st.markdown(f"""
-        <div style="text-align:center;">
-            <div style="font-family:'Playfair Display',serif;
-                        font-size:12px;font-weight:600;
-                        color:#4A3833;margin:6px 0 2px;">{titre}</div>
-            <div style="font-family:'Lora',serif;font-size:10px;
-                        color:#8C5A49;font-style:italic;">{desc}</div>
-        </div>
+        <div style="font-family:'Playfair Display',serif;font-size:13px;
+                    font-weight:600;color:#4A3833;margin:6px 0 2px;">{label}</div>
+        <div style="font-family:'Lora',serif;font-size:11px;
+                    color:#8C5A49;font-style:italic;">{desc}</div>
         """, unsafe_allow_html=True)
 
 st.markdown("<br/>", unsafe_allow_html=True)
 
-if st.button("Lancer la production sociale",
+if st.button("Generer le calendrier du mois",
              type="primary", use_container_width=True):
-    if not theme:
-        st.error("Merci d'indiquer le theme du contenu.")
-    else:
-        contexte_global = f"""
-Maison editoriale : Maman & Leader
-Theme : {theme}
-Canal : {canal}
-Pilier : {pilier}
-Nombre de posts : {nb_posts}
-Phase marketing : {phase}
+
+    mois_num = ["Janvier","Fevrier","Mars","Avril","Mai","Juin",
+                 "Juillet","Aout","Septembre","Octobre","Novembre",
+                 "Decembre"].index(mois) + 1
+    nb_jours = calendar.monthrange(int(annee), mois_num)[1]
+    date_debut = f"{int(annee):04d}-{mois_num:02d}-01"
+    date_fin = f"{int(annee):04d}-{mois_num:02d}-{nb_jours:02d}"
+
+    # ── ETAPE 1 — Marketing ──────────────────────────────
+    with st.expander("Etape 1 — Directrice Marketing", expanded=True):
+        col_i, col_t = st.columns([1, 4])
+        with col_i:
+            img = charger_image("marketing")
+            if img:
+                st.image(img, width=60)
+        with col_t:
+            with st.spinner("Analyse marketing en cours..."):
+                instr_mkt = f"""
+Tu es la Directrice Marketing de Maman & Leader.
+Definis l'intention marketing pour {mois} {annee}.
 Contexte : {contexte_supp if contexte_supp else 'Aucun'}
-Strategie : Identification 60% Mise en conscience 25% Desserrage 10% Invitation 5%
-Instagram = relation | Pinterest = acquisition
-"""
-        resultats = {}
 
-        with st.expander("Etape 1 — Directrice Marketing", expanded=True):
-            col_i, col_t = st.columns([1, 4])
-            with col_i:
-                img = charger_image("marketing")
-                if img:
-                    st.image(img, width=60)
-            with col_t:
-                with st.spinner("Intention marketing en cours..."):
-                    instr = f"""
-Definis l'intention marketing pour ce contenu social :
-Theme : {theme}
-Canal : {canal}
-Pilier : {pilier}
-Phase : {phase}
-Nombre de posts : {nb_posts}
-Produis : pilier dominant et justification, angle editorial
-pour chaque post, promesse emotionnelle centrale,
-repartition Identification/Conscience/Desserrage/Invitation.
+Reponds UNIQUEMENT avec ce JSON exact (rien d'autre) :
+{{
+  "Intentions marketing": "...",
+  "Phase marketing": "Installation",
+  "Pilier dominant": "A tes cotes"
+}}
+
+Phase doit etre : Installation ou Consolidation ou Stabilisation
+Pilier doit etre : A tes cotes ou Structurer sans s'epuiser
 """
-                    resultats["marketing"] = lancer_agent(
-                        "marketing", instr, prompts, contexte_global
+            import anthropic as _ant
+            _client = _ant.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            _msg = _client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": instr_mkt}]
+            )
+            reponse_mkt = _msg.content[0].text
+
+            try:
+                json_match = re.search(r'\{[^{}]+\}', reponse_mkt,
+                                       re.DOTALL)
+                if json_match:
+                    intention_data = json.loads(json_match.group())
+                else:
+                    intention_data = {
+                        "Intentions marketing": reponse_mkt[:200],
+                        "Phase marketing": "Consolidation",
+                        "Pilier dominant": "A tes cotes"
+                    }
+            except Exception:
+                intention_data = {
+                    "Intentions marketing": reponse_mkt[:200],
+                    "Phase marketing": "Consolidation",
+                    "Pilier dominant": "A tes cotes"
+                }
+
+            st.success("Intention marketing definie")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Phase", intention_data.get("Phase marketing","—"))
+            c2.metric("Pilier", intention_data.get("Pilier dominant","—"))
+            c3.metric("Periode", f"{date_debut} -> {date_fin}")
+            st.caption(intention_data.get("Intentions marketing","")[:300])
+
+    # ── ETAPE 2 — Calendrier par semaines ────────────────
+    with st.expander("Etape 2 — Generation du calendrier",
+                     expanded=True):
+        col_i, col_t = st.columns([1, 4])
+        with col_i:
+            img = charger_image("redactrice")
+            if img:
+                st.image(img, width=60)
+        with col_t:
+            import anthropic as ant_module
+            client_ant = ant_module.Anthropic(
+                api_key=os.getenv("ANTHROPIC_API_KEY")
+            )
+
+            # Découper en semaines
+            tous_les_jours = []
+            d = datetime.date(int(annee), mois_num, 1)
+            d_fin = datetime.date(int(annee), mois_num, nb_jours)
+            while d <= d_fin:
+                tous_les_jours.append(d)
+                d += datetime.timedelta(days=1)
+
+            semaines = []
+            for i in range(0, len(tous_les_jours), 7):
+                semaines.append(tous_les_jours[i:i+7])
+
+            tous_posts = []
+            progress = st.progress(0)
+
+            for idx, semaine in enumerate(semaines):
+                ds = semaine[0].strftime("%Y-%m-%d")
+                df = semaine[-1].strftime("%Y-%m-%d")
+                st.caption(f"Semaine {idx+1}/{len(semaines)} : {ds} -> {df}")
+                progress.progress(int((idx / len(semaines)) * 90))
+                try:
+                    posts_s = generer_semaine(
+                        client_ant, ds, df, intention_data
                     )
-                st.success("Intention marketing definie")
-                st.markdown(resultats["marketing"])
+                    tous_posts.extend(posts_s)
+                    st.caption(f"  -> {len(posts_s)} posts generes")
+                except Exception as e:
+                    st.warning(f"Semaine {idx+1} erreur : {str(e)[:100]}")
 
-        with st.expander("Etape 2 — Directrice Editoriale", expanded=True):
-            col_i, col_t = st.columns([1, 4])
-            with col_i:
-                img = charger_image("editoriale")
-                if img:
-                    st.image(img, width=60)
-            with col_t:
-                with st.spinner("Structure des contenus en cours..."):
-                    instr = f"""
-Sur la base de cette intention marketing :
-{resultats['marketing'][:500]}
-Structure {nb_posts} posts pour {canal} :
-Theme : {theme} | Pilier : {pilier}
-Pour chaque post definis : format, angle specifique,
-message cle, phase de progression.
-"""
-                    resultats["editoriale"] = lancer_agent(
-                        "editoriale", instr, prompts, contexte_global
-                    )
-                st.success("Structure des posts definie")
-                st.markdown(resultats["editoriale"])
+            progress.progress(100)
 
-        with st.expander("Etape 3 — Redactrice", expanded=True):
-            col_i, col_t = st.columns([1, 4])
-            with col_i:
-                img = charger_image("redactrice")
-                if img:
-                    st.image(img, width=60)
-            with col_t:
-                with st.spinner("Redaction des posts en cours..."):
-                    instr = f"""
-Sur la base de cette structure :
-{resultats['editoriale'][:600]}
-Redige les {nb_posts} posts complets pour {canal}.
-Theme : {theme}
-Pour chaque post : texte complet pret a publier,
-ton mature introspectif non demonstratif,
-jamais motivationnel jamais agressif,
-adapte au canal Instagram relation / Pinterest acquisition.
-Format : Post 1 / Post 2 / etc.
-Uniquement le texte final. Pas de commentaires.
-"""
-                    resultats["redactrice"] = lancer_agent(
-                        "redactrice", instr, prompts, contexte_global
-                    )
-                st.success("Posts rediges")
-                st.markdown(resultats["redactrice"])
+            if tous_posts:
+                st.success(
+                    f"{len(tous_posts)} entrees generees pour {mois} {annee}"
+                )
+                st.session_state["calendrier_posts"] = tous_posts
+                st.session_state["calendrier_mois"] = f"{mois} {annee}"
+            else:
+                st.error("Aucun post genere")
+                st.session_state["calendrier_posts"] = []
 
-        with st.expander("Etape 4 — Directrice Artistique", expanded=True):
-            col_i, col_t = st.columns([1, 4])
-            with col_i:
-                img = charger_image("da")
-                if img:
-                    st.image(img, width=60)
-            with col_t:
-                with st.spinner("Direction visuelle en cours..."):
-                    instr = f"""
-Pour {nb_posts} posts sur {canal} :
-Theme : {theme} | Pilier : {pilier}
-Definis pour chaque post : type de visuel,
-palette utilisee codes hex Maman & Leader,
-composition et disposition, intentions typographiques,
-prompt de generation visuelle si applicable.
-"""
-                    resultats["da"] = lancer_agent(
-                        "da", instr, prompts, contexte_global
-                    )
-                st.success("Direction visuelle produite")
-                st.markdown(resultats["da"])
+# ── AFFICHAGE ─────────────────────────────────────────────
+if st.session_state.get("calendrier_posts"):
+    posts = st.session_state["calendrier_posts"]
 
-        st.markdown("<hr/>", unsafe_allow_html=True)
-        st.markdown("### Plan social complet")
+    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.markdown(
+        f"### Calendrier — {st.session_state.get('calendrier_mois','')}"
+    )
 
-        livrable = f"""
-PLAN SOCIAL — {theme.upper()}
-Maman & Leader — {canal}
-{datetime.datetime.now().strftime("%d/%m/%Y")}
-{'='*50}
+    nb_reels = len([p for p in posts if p.get("Support") == "Reel"])
+    nb_carr  = len([p for p in posts if p.get("Support") == "Carrousel"])
+    nb_story = len([p for p in posts if p.get("Support") == "Story"])
 
-PILIER : {pilier}
-PHASE : {phase}
-POSTS : {nb_posts}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total", len(posts))
+    c2.metric("Reels", nb_reels)
+    c3.metric("Carrousels", nb_carr)
+    c4.metric("Stories", nb_story)
 
-INTENTION MARKETING
-{resultats['marketing']}
-
-STRUCTURE DES CONTENUS
-{resultats['editoriale']}
-
-TEXTES DES POSTS
-{resultats['redactrice']}
-
-DIRECTION VISUELLE
-{resultats['da']}
-"""
-        sauvegarder_livrable(theme, "Contenus Social", livrable)
-        from notion_sync import envoyer_notion
-        import datetime as dt
-        ok, msg = envoyer_notion(
-            titre=theme,
-            type_mission="Contenus Social",
-            contenu=livrable,
-            date_str=dt.datetime.now().strftime("%Y-%m-%d")
-        )
-        if ok:
-            st.success("✦ Livrable envoyé dans Notion !")
-        else:
-            st.warning(f"Notion : {msg}")
-        st.success("Plan social genere et sauvegarde !")
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
+        if st.button("Envoyer dans Airtable",
+                     type="primary", use_container_width=True):
+            with st.spinner("Envoi en cours..."):
+                ok, msg = envoyer_airtable(posts)
+            if ok:
+                st.success(f"✦ {msg}")
+            else:
+                st.error(msg)
+    with col_b2:
         st.download_button(
-            "Telecharger le plan social",
-            data=livrable,
-            file_name=f"social_{theme.replace(' ','_')}.txt",
-            mime="text/plain",
+            "Telecharger JSON",
+            data=json.dumps(posts, ensure_ascii=False, indent=2),
+            file_name=f"calendrier_{st.session_state.get('calendrier_mois','')}.json",
+            mime="application/json",
             use_container_width=True
         )
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    for post in posts:
+        support = post.get("Support", "")
+        with st.expander(
+            f"📅 {post.get('Date','—')} — {support} — {post.get('Hook','')[:50]}"
+        ):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown(f"""
+                <span class="badge-support">{support}</span>
+                <span class="badge-support">{post.get('Pilier','')}</span>
+                <span class="badge-support">{post.get('Angle','')}</span>
+                """, unsafe_allow_html=True)
+                st.markdown(f"**Hook :** {post.get('Hook','')}")
+                st.markdown("**Contenu :**")
+                st.text(post.get("ContenuPost",""))
+            with col_b:
+                st.markdown("**Caption :**")
+                st.text(post.get("Caption","")[:600] + "...")
+                st.markdown("**Brief visuel :**")
+                st.caption(f"Couleur : {post.get('BriefCouleur','')}")
+                st.caption(f"Alignement : {post.get('BriefAlignement','')}")
+                st.caption(f"Bloc : {post.get('BriefBloc','')}")
+                st.caption(f"Ambiance : {post.get('BriefAmbiance','')}")
