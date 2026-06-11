@@ -6,3 +6,5 @@ documents/
 __pycache__/
 *.pyc
 documents/*.png
+credentials.json
+token.json

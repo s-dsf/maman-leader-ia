@@ -188,10 +188,15 @@ with col_h1:
         if st.button("✦ Blog & Audit", use_container_width=True):
             st.switch_page("pages/blog.py")
 
-c5, c6 = st.columns(2)
-with c5:
-    if st.button("🎨 Visuels", use_container_width=True):
-        st.switch_page("pages/visuels.py")
+    c5, c6 = st.columns(2)
+    with c5:
+        if st.button("🎨 Visuels", use_container_width=True):
+            st.switch_page("pages/visuels.py")
+
+    c7, c8 = st.columns(2)
+    with c7:
+        if st.button("✅ Validation posts", use_container_width=True):
+            st.switch_page("pages/validation.py")
 
 with col_h2:
     c1, c2, c3 = st.columns(3)

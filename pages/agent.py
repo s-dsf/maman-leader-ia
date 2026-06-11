@@ -34,6 +34,24 @@ def chat_avec_agent(agent_key, message, prompts):
     from agent_direct import lancer_agent as _lancer
     return _lancer(agent_key, message, prompts)
 
+def sauvegarder_historique(p, user_input, rep):
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    titre_conv = f"Chat {p['nom']} — {user_input[:30]}"
+    data = {
+        "id": ts,
+        "titre": titre_conv,
+        "auteur": "Maman & Leader",
+        "genre": "Conversation",
+        "type_mission": f"Chat — {p['nom']}",
+        "synopsis": user_input[:100],
+        "resultat": f"Question : {user_input}\n\nRéponse : {rep}",
+        "date": datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")
+    }
+    Path("historique").mkdir(exist_ok=True)
+    with open(Path("historique") / f"{ts}_chat_{p['nom'][:10]}.json",
+              "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+
 # ── CSS ──────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -92,32 +110,6 @@ h1, h2, h3 {
     color: #C77A5C;
     font-family: 'Playfair Display', serif;
 }
-
-.suggestion-pill {
-    display: inline-block;
-    background: #FFFFFF;
-    border: 1px solid #EDD9CF;
-    border-radius: 20px;
-    padding: 6px 16px;
-    font-size: 12px;
-    font-family: 'Lora', serif;
-    color: #8C5A49;
-    cursor: pointer;
-    margin: 4px;
-    transition: all 0.2s;
-}
-.suggestion-pill:hover {
-    background: #FAEAE3;
-    border-color: #C77A5C;
-}
-
-.nav-agent {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 0;
-}
-
 .stButton > button {
     font-family: 'Lora', serif !important;
     border-radius: 8px !important;
@@ -143,7 +135,6 @@ prompts = charger_prompts()
 historique = charger_historique()
 agent_key = st.session_state.get("agent_actif", "marketing")
 
-# Charger les données de l'agent
 agents_base = ["marketing", "editoriale", "redactrice", "da", "maquette"]
 if agent_key in agents_base:
     p = prompts.get(agent_key, prompts["marketing"])
@@ -202,7 +193,6 @@ with col_gauche:
         )
         st.markdown("<br/>", unsafe_allow_html=True)
 
-        # Stats
         nb_livrables = len(historique)
         st.markdown(f"""
         <div class="stat-ligne">
@@ -226,11 +216,10 @@ with col_gauche:
                 st.caption(f"→ {ligne.strip()[:50]}")
 
         st.markdown("<br/>", unsafe_allow_html=True)
-        if st.button("✦ Modifier cette agente",
-                     use_container_width=True):
+        if st.button("✦ Modifier cette agente", use_container_width=True):
             st.switch_page("pages/configuration.py")
 
-# ── COLONNE DROITE — Onglets ─────────────────────────────
+# ── COLONNE DROITE ───────────────────────────────────────
 with col_droite:
     tab_chat, tab_analytics, tab_fichiers, tab_historique = st.tabs([
         "💬 Chat", "📊 Analytics", "📂 Fichiers", "🕐 Historique"
@@ -260,7 +249,6 @@ with col_droite:
             </div>
             """, unsafe_allow_html=True)
 
-            # Suggestions par agent
             suggestions = {
                 "marketing": [
                     "Analyse le marché des ebooks premium féminins",
@@ -303,51 +291,12 @@ with col_droite:
                         st.session_state[chat_key].append(
                             {"role": "user", "content": sugg}
                         )
-# Sauvegarde automatique dans l'historique
-            import datetime, json
-            from pathlib import Path
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            titre_conv = f"Chat {p['nom']} — {user_input[:30]}"
-            data = {
-                "id": ts,
-                "titre": titre_conv,
-                "auteur": "Maman & Leader",
-                "genre": "Conversation",
-                "type_mission": f"Chat — {p['nom']}",
-                "synopsis": user_input[:100],
-                "resultat": f"Question : {user_input}\n\nRéponse : {rep}",
-                "date": datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")
-            }
-            Path("historique").mkdir(exist_ok=True)
-            with open(Path("historique") / f"{ts}_chat_{p['nom'][:10]}.json",
-                      "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
                         with st.spinner(f"{p['nom']} réfléchit..."):
-                            rep = chat_avec_agent(
-                                agent_key, sugg, prompts
-                            )
+                            rep = chat_avec_agent(agent_key, sugg, prompts)
                         st.session_state[chat_key].append(
                             {"role": "assistant", "content": rep}
                         )
-# Sauvegarde automatique dans l'historique
-            import datetime, json
-            from pathlib import Path
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            titre_conv = f"Chat {p['nom']} — {user_input[:30]}"
-            data = {
-                "id": ts,
-                "titre": titre_conv,
-                "auteur": "Maman & Leader",
-                "genre": "Conversation",
-                "type_mission": f"Chat — {p['nom']}",
-                "synopsis": user_input[:100],
-                "resultat": f"Question : {user_input}\n\nRéponse : {rep}",
-                "date": datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")
-            }
-            Path("historique").mkdir(exist_ok=True)
-            with open(Path("historique") / f"{ts}_chat_{p['nom'][:10]}.json",
-                      "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
+                        sauvegarder_historique(p, sugg, rep)
                         st.rerun()
 
         # Affichage conversation
@@ -357,9 +306,7 @@ with col_droite:
                 st.markdown(msg["content"])
 
         # Saisie
-        user_input = st.chat_input(
-            f"Demandez à {p['nom']}..."
-        )
+        user_input = st.chat_input(f"Demandez à {p['nom']}...")
         if user_input:
             st.session_state[chat_key].append(
                 {"role": "user", "content": user_input}
@@ -368,17 +315,15 @@ with col_droite:
                 st.markdown(user_input)
             with st.chat_message("assistant", avatar="🌸"):
                 with st.spinner(f"{p['nom']} réfléchit..."):
-                    rep = chat_avec_agent(
-                        agent_key, user_input, prompts
-                    )
+                    rep = chat_avec_agent(agent_key, user_input, prompts)
                 st.markdown(rep)
             st.session_state[chat_key].append(
                 {"role": "assistant", "content": rep}
             )
+            sauvegarder_historique(p, user_input, rep)
 
         if st.session_state.get(chat_key):
-            if st.button("🗑️ Effacer la conversation",
-                         key="clear_chat"):
+            if st.button("🗑️ Effacer la conversation", key="clear_chat"):
                 st.session_state[chat_key] = []
                 st.rerun()
 
@@ -432,12 +377,8 @@ with col_droite:
                 ):
                     col_i, col_d = st.columns([3, 1])
                     with col_i:
-                        st.caption(
-                            f"Type : {d.get('type_mission','Livrable')}"
-                        )
-                        st.caption(
-                            f"Synopsis : {d.get('synopsis','—')[:150]}..."
-                        )
+                        st.caption(f"Type : {d.get('type_mission','Livrable')}")
+                        st.caption(f"Synopsis : {d.get('synopsis','—')[:150]}...")
                     with col_d:
                         st.download_button(
                             "⬇️ Télécharger",
@@ -461,17 +402,13 @@ with col_droite:
         chat_key = f"chat_{agent_key}"
 
         if st.session_state.get(chat_key):
-            for i, msg in enumerate(
-                reversed(st.session_state[chat_key])
-            ):
-                role_label = "Toi" if msg["role"] == "user" \
-                    else p["nom"]
+            for i, msg in enumerate(reversed(st.session_state[chat_key])):
+                role_label = "Toi" if msg["role"] == "user" else p["nom"]
                 icon = "👤" if msg["role"] == "user" else "✦"
                 with st.container(border=True):
                     st.caption(f"{icon} **{role_label}**")
                     st.markdown(msg["content"][:300] +
-                                ("..." if len(msg["content"]) > 300
-                                 else ""))
+                                ("..." if len(msg["content"]) > 300 else ""))
         else:
             st.markdown("""
             <div style="padding:40px;text-align:center;
