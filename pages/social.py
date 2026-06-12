@@ -50,7 +50,7 @@ def envoyer_airtable(posts):
         records = []
         for post in batch:
             fields = {}
-            for key in ["Date","Support","Pilier","Angle","Hook","ContenuPost","Caption","BriefCouleur","BriefAlignement","BriefBloc","BriefAmbiance"]:
+            for key in ["Date","Support","Pilier","Angle","Hook","ContenuPost","Caption","BriefGeneral"]:
                 if key in post:
                     fields[key] = str(post[key])
             fields["StatutPublication"] = "Brouillon"
@@ -58,6 +58,10 @@ def envoyer_airtable(posts):
         try:
             resp = requests.post(url, headers=headers, json={"records": records}, timeout=30)
             if resp.status_code == 200:
+                returned = resp.json().get("records", [])
+                for post_obj, rec in zip(batch, returned):
+                    post_obj["_record_id"] = rec.get("id", "")
+                    post_obj["StatutPublication"] = "Brouillon"
                 succes += len(batch)
             else:
                 erreurs.append(f"Batch {i//10+1}: {resp.status_code} — {resp.text[:150]}")
@@ -128,7 +132,10 @@ Termine par une note douce invitant au partage."""
         reponse = re.sub(r'```', '', reponse)
     start = reponse.find('{')
     end = reponse.rfind('}') + 1
-    return json.loads(reponse[start:end])
+    modifs = json.loads(reponse[start:end])
+    if isinstance(modifs.get("ContenuPost"), dict):
+        modifs["ContenuPost"] = json.dumps(modifs["ContenuPost"], ensure_ascii=False)
+    return modifs
 
 def wrap_text_pillow(texte, font, draw, max_width):
     mots = texte.split()
@@ -160,12 +167,11 @@ def generer_png_story(post):
     fond = FOND_TERRA if is_terra else FOND_BEIGE
     couleur = (251, 248, 246) if is_terra else (74, 56, 51)
     slides = []
-    for l in contenu.split('\n'):
-        l = l.strip()
-        if l and 'Story' in l:
-            texte = re.sub(r'^Story\s*\d+\s*[:/]?\s*', '', l).strip()
-            if texte:
-                slides.append(texte)
+    morceaux = re.split(r'Story\s*\d+\s*[:/]?\s*', contenu)
+    for morceau in morceaux:
+        texte = morceau.strip().replace('\n', ' ')
+        if texte:
+            slides.append(texte)
     if not slides:
         slides = [hook]
     pngs = []
@@ -190,7 +196,8 @@ def generer_png_story(post):
         buf = BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-        pngs.append((f"story_{idx+1:02d}", buf.getvalue()))
+        date_str = str(post.get("Date", "")).replace("-", "")
+        pngs.append((f"{date_str}_Story_{idx+1}", buf.getvalue()))
     return pngs
 
 def generer_png_carrousel(post):
@@ -202,10 +209,12 @@ def generer_png_carrousel(post):
     except Exception:
         jour = 1
     is_terra = jour % 2 == 0
-    fond_cover = FOND_TERRA if is_terra else FOND_BEIGE
-    fond_slides = FOND_BEIGE if is_terra else FOND_TERRA
-    couleur_cover = (251, 248, 246) if is_terra else (74, 56, 51)
-    couleur_slides = (74, 56, 51) if is_terra else (251, 248, 246)
+    fond_unique = FOND_TERRA if is_terra else FOND_BEIGE
+    couleur_unique = (251, 248, 246) if is_terra else (74, 56, 51)
+    fond_cover = fond_unique
+    fond_slides = fond_unique
+    couleur_cover = couleur_unique
+    couleur_slides = couleur_unique
     slides_textes = []
     # Découpe sur les "Slide N" même sur une seule ligne
     morceaux = re.split(r'Slide\s*\d+\s*[:/]?\s*', contenu)
@@ -215,12 +224,14 @@ def generer_png_carrousel(post):
             slides_textes.append(texte)
     if not slides_textes:
         slides_textes = [hook]
+    elif slides_textes and slides_textes[0].strip() == hook.strip():
+        slides_textes = slides_textes[1:]
 
     def faire_slide(fond, couleur, texte):
         img = Image.open(fond).convert("RGB").copy()
         W_orig, H_orig = img.size
-        top = (H_orig - 1080) // 2
-        img = img.crop((0, top, 1080, top + 1080))
+        top = H_orig - 1080
+        img = img.crop((0, top, 1080, H_orig))
         draw = ImageDraw.Draw(img)
         W, H = img.size
         taille = 88
@@ -250,18 +261,19 @@ def generer_png_carrousel(post):
     def faire_slide_logo(fond):
         img = Image.open(fond).convert("RGB").copy()
         W_orig, H_orig = img.size
-        top = (H_orig - 1080) // 2
-        img = img.crop((0, top, 1080, top + 1080))
+        top = H_orig - 1080
+        img = img.crop((0, top, 1080, H_orig))
         buf = BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
         return buf.getvalue()
 
+    date_str = str(post.get("Date", "")).replace("-", "")
     pngs = []
-    pngs.append(("slide_01_cover", faire_slide(fond_cover, couleur_cover, hook)))
+    pngs.append((f"{date_str}_Carrousel_1", faire_slide(fond_cover, couleur_cover, hook)))
     for idx, texte in enumerate(slides_textes[:7]):
-        pngs.append((f"slide_{idx+2:02d}", faire_slide(fond_slides, couleur_slides, texte)))
-    pngs.append((f"slide_{len(pngs)+1:02d}_logo", faire_slide_logo(fond_cover)))
+        pngs.append((f"{date_str}_Carrousel_{idx+2}", faire_slide(fond_slides, couleur_slides, texte)))
+    pngs.append((f"{date_str}_Carrousel_{len(pngs)+1}", faire_slide_logo(fond_cover)))
     return pngs
 
 def generer_brief_canva(post):
@@ -276,7 +288,7 @@ POST :
 Hook : {post.get('Hook','')}
 Contenu : {post.get('ContenuPost','')}
 Angle : {post.get('Angle','')}
-Ambiance : {post.get('BriefAmbiance','')}
+Brief general : {post.get('BriefGeneral','')}
 
 {"BD — 6 cases CARREES grille 2x3, illustration douce realiste, femme brune, scenes quotidiennes, bulles dialogue, derniere case fond nude texte editorial fort, 1080x1350px." if support == "BD" else "INFOGRAPHIE — structure graphique, icones lineaires, fond nude, typo editoriale, palette terracotta, 1080x1350px."}
 
@@ -292,9 +304,7 @@ Polices : Playfair Display (titres) / Lora (corps)
 POST {support.upper()} :
 Hook : {post.get('Hook','')}
 Contenu : {post.get('ContenuPost','')}
-BriefCouleur : {post.get('BriefCouleur','')}
-BriefAlignement : {post.get('BriefAlignement','')}
-BriefAmbiance : {post.get('BriefAmbiance','')}
+Brief general : {post.get('BriefGeneral','')}
 
 Instructions Canva pas a pas :
 1. Format pixels et fond
@@ -372,13 +382,15 @@ Question ouverte positive en fin.
 50% sans mention / 30% guide gratuit / 15% ebook 9.90 / 5% ebook 24.90
 Si mention : Le lien est en bio.
 
+BRIEF GENERAL : Uniquement pour Reel, BD et Infographie — un texte libre de quelques phrases decrivant l'ambiance visuelle, les couleurs, la mise en scene et le style attendu pour la creation. Laisser vide ("") pour Story et Carrousel.
+
 VALEURS AUTORISEES :
 Support : Reel / Story / Carrousel / Infographie / BD
 Pilier : A tes cotes / Structurer sans s'epuiser
 Angle : Identification / Conscience / Desserrage / Invitation
 
 FORMAT : Tableau JSON valide uniquement [ ... ]. Aucun texte avant ou apres.
-Champs : Date, Support, Pilier, Angle, Hook, ContenuPost, Caption, BriefCouleur, BriefAlignement, BriefBloc, BriefAmbiance"""
+Champs : Date, Support, Pilier, Angle, Hook, ContenuPost, Caption, BriefGeneral"""
     msg = client.messages.create(model="claude-sonnet-4-6", max_tokens=8192, messages=[{"role": "user", "content": prompt}])
     reponse = msg.content[0].text.strip()
     if "```" in reponse:
@@ -426,12 +438,13 @@ tab_gen, tab_val = st.tabs(["✦ Generer le calendrier", "✅ Valider les posts"
 
 # ONGLET 1 — GENERER
 with tab_gen:
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        mois = st.selectbox("Mois *", ["Janvier","Fevrier","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Decembre"])
-        annee = st.number_input("Annee *", min_value=2025, max_value=2030, value=datetime.datetime.now().year)
+        date_debut_input = st.date_input("Date de début *", value=datetime.date.today())
     with col2:
-        contexte_supp = st.text_area("Contexte du mois (optionnel)", placeholder="Lancement ebook, evenement...", height=100)
+        date_fin_input = st.date_input("Date de fin *", value=datetime.date.today() + datetime.timedelta(days=6))
+    with col3:
+        contexte_supp = st.text_area("Contexte (optionnel)", placeholder="Lancement ebook, evenement...", height=70)
 
     st.markdown("<br/>", unsafe_allow_html=True)
     cols_f = st.columns(2)
@@ -448,10 +461,8 @@ with tab_gen:
     st.markdown("<br/>", unsafe_allow_html=True)
 
     if st.button("Generer le calendrier", type="primary", use_container_width=True):
-        mois_num = ["Janvier","Fevrier","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Decembre"].index(mois) + 1
-        nb_jours = calendar.monthrange(int(annee), mois_num)[1]
-        date_debut = f"{int(annee):04d}-{mois_num:02d}-01"
-        date_fin = f"{int(annee):04d}-{mois_num:02d}-{nb_jours:02d}"
+        date_debut = date_debut_input.strftime("%Y-%m-%d")
+        date_fin = date_fin_input.strftime("%Y-%m-%d")
 
         with st.expander("Etape 1 — Directrice Marketing", expanded=True):
             col_i, col_t = st.columns([1, 4])
@@ -463,7 +474,7 @@ with tab_gen:
                 with st.spinner("Intention marketing..."):
                     import anthropic as ant_m
                     client_m = ant_m.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-                    instr_mkt = f"""Definis l'intention marketing de Maman & Leader pour {mois} {annee}.
+                    instr_mkt = f"""Definis l'intention marketing de Maman & Leader pour la periode du {date_debut} au {date_fin}.
 Contexte : {contexte_supp if contexte_supp else 'Aucun'}
 Reponds UNIQUEMENT avec ce JSON :
 {{"Intentions marketing": "...", "Phase marketing": "Consolidation", "Pilier dominant": "A tes cotes"}}
@@ -521,8 +532,8 @@ Pilier : A tes cotes ou Structurer sans s'epuiser"""
                     st.caption("Historique non charge")
 
                 tous_les_jours = []
-                d = datetime.date(int(annee), mois_num, 1)
-                d_fin = datetime.date(int(annee), mois_num, nb_jours)
+                d = date_debut_input
+                d_fin = date_fin_input
                 while d <= d_fin:
                     tous_les_jours.append(d)
                     d += datetime.timedelta(days=1)
@@ -532,7 +543,10 @@ Pilier : A tes cotes ou Structurer sans s'epuiser"""
                 for idx, semaine in enumerate(semaines):
                     ds = semaine[0].strftime("%Y-%m-%d")
                     df = semaine[-1].strftime("%Y-%m-%d")
-                    st.caption(f"Semaine {idx+1}/{len(semaines)} : {ds} -> {df}")
+                    if ds == df:
+                        st.caption(f"Jour : {ds}")
+                    else:
+                        st.caption(f"Periode {idx+1}/{len(semaines)} : {ds} -> {df}")
                     progress.progress(int((idx / len(semaines)) * 90))
                     try:
                         posts_s = generer_semaine(client_c, ds, df, st.session_state.get("intention_data", {}), historique_hooks, historique_sujets)
@@ -547,9 +561,9 @@ Pilier : A tes cotes ou Structurer sans s'epuiser"""
                         st.warning(f"Semaine {idx+1} : {str(e)[:100]}")
                 progress.progress(100)
                 if tous_posts:
-                    st.success(f"{len(tous_posts)} posts generes pour {mois} {annee}")
+                    st.success(f"{len(tous_posts)} posts generes du {date_debut} au {date_fin}")
                     st.session_state["calendrier_posts"] = tous_posts
-                    st.session_state["calendrier_mois"] = f"{mois} {annee}"
+                    st.session_state["calendrier_mois"] = f"{date_debut}_au_{date_fin}"
                 else:
                     st.error("Aucun post genere")
                     st.session_state["calendrier_posts"] = []
@@ -611,12 +625,10 @@ with tab_val:
         with col_f2:
             filtre_statut = st.selectbox("Statut", ["Brouillon","Valide","Tous","Publie"], key="filt_stat2")
         posts_session = st.session_state.get("calendrier_posts", [])
-        posts_a_valider = []
         for p in posts_session:
-            post_copy = dict(p)
-            if "_record_id" not in post_copy:
-                post_copy["_record_id"] = ""
-            posts_a_valider.append(post_copy)
+            if "_record_id" not in p:
+                p["_record_id"] = ""
+        posts_a_valider = posts_session
 
     if not posts_a_valider:
         if source == "Posts generes (session en cours)":
@@ -675,10 +687,10 @@ with tab_val:
                     st.markdown("**Caption :**")
                     caption_str = str(post.get("Caption","") or "")
                     st.text(caption_str[:400] + ("..." if len(caption_str) > 400 else ""))
-                    st.markdown("**Brief visuel :**")
-                    st.caption(f"Couleur : {post.get('BriefCouleur','')}")
-                    st.caption(f"Alignement : {post.get('BriefAlignement','')}")
-                    st.caption(f"Ambiance : {post.get('BriefAmbiance','')}")
+                    brief_general = post.get("BriefGeneral", "")
+                    if brief_general:
+                        st.markdown("**Brief général :**")
+                        st.caption(brief_general)
 
                 st.markdown("<br/>", unsafe_allow_html=True)
                 col_a1, col_a2, col_a3 = st.columns(3)
@@ -698,7 +710,7 @@ with tab_val:
                             table_id_at = os.getenv("AIRTABLE_TABLE_ID")
                             url_at = f"https://api.airtable.com/v0/{base_id_at}/{table_id_at}"
                             headers_at = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-                            fields_at = {k: str(post[k]) for k in ["Date","Support","Pilier","Angle","Hook","ContenuPost","Caption","BriefCouleur","BriefAlignement","BriefBloc","BriefAmbiance"] if post.get(k)}
+                            fields_at = {k: str(post[k]) for k in ["Date","Support","Pilier","Angle","Hook","ContenuPost","Caption","BriefGeneral"] if post.get(k)}
                             fields_at["StatutPublication"] = "Valide"
                             try:
                                 resp_at = requests.post(url_at, headers=headers_at, json={"records": [{"fields": fields_at}]}, timeout=30)
@@ -733,21 +745,23 @@ with tab_val:
                                                 st.error(f"Modifie mais erreur : {msg_m}")
                                         else:
                                             st.success("✦ Modifie en session !")
+                                        st.rerun()
                                     except Exception as e:
                                         st.error(str(e)[:200])
                             else:
                                 st.warning("Ecris ta demande.")
 
                 with col_a3:
-                    if st.button("🎨 Brief creation", key=f"crea_{idx}_{date}", use_container_width=True):
-                        with st.spinner("Generation..."):
-                            brief = generer_brief_canva(post)
-                        if record_id:
-                            mettre_a_jour_airtable(record_id, {"StatutPublication": "En creation"})
-                        post["StatutPublication"] = "En creation"
-                        st.session_state[f"brief_{idx}_{date}"] = brief
-                        st.session_state[f"texte_{idx}_{date}"] = formater_texte_canva(post)
-                        st.session_state[f"show_brief_{idx}_{date}"] = True
+                    if support in ["Reel", "BD", "Infographie"]:
+                        if st.button("🎨 Brief creation", key=f"crea_{idx}_{date}", use_container_width=True):
+                            with st.spinner("Generation..."):
+                                brief = generer_brief_canva(post)
+                            post["PromptCrea"] = brief
+                            if record_id:
+                                mettre_a_jour_airtable(record_id, {"StatutPublication": "En creation", "PromptCrea": brief})
+                            post["StatutPublication"] = "En creation"
+                            st.session_state[f"brief_{idx}_{date}"] = brief
+                            st.session_state[f"show_brief_{idx}_{date}"] = True
 
                 st.markdown("<br/>", unsafe_allow_html=True)
                 col_v1, col_v2 = st.columns(2)
@@ -765,7 +779,7 @@ with tab_val:
                                     # Upload Drive automatique
                                     pngs_avec_drive = []
                                     for nom, png_bytes in pngs:
-                                        filename = f"{date}_{support}_{nom}.png"
+                                        filename = f"{nom}.png"
                                         tmp_path = VISUELS_DIR / filename
                                         tmp_path.write_bytes(png_bytes)
                                         drive_result = upload_vers_drive(str(tmp_path), filename)
@@ -827,34 +841,27 @@ with tab_val:
                                 <a href="{drive_result["url_directe"]}" target="_blank" style="color:#2E7D32;">Lien direct</a>
                             </div>
                             ''', unsafe_allow_html=True)
-                            # Mise a jour Airtable avec URL visuel
+                            # Mise a jour Airtable avec toutes les URLs
                             if record_id:
-                                mettre_a_jour_airtable(record_id, {"URLVisuel": drive_result["url_directe"]})
+                                urls_existantes = post.get("URLVisuel", "") or ""
+                                nouvelle_url = drive_result["url_directe"]
+                                if nouvelle_url not in urls_existantes:
+                                    urls_combinees = (urls_existantes + "\n" + nouvelle_url).strip() if urls_existantes else nouvelle_url
+                                    post["URLVisuel"] = urls_combinees
+                                    mettre_a_jour_airtable(record_id, {"URLVisuel": urls_combinees})
 
                         st.download_button(f"⬇️ {nom}.png", data=png_bytes, file_name=f"{nom}_{date}.png", mime="image/png", key=f"dl_{idx}_{date}_{nom}")
 
                     if st.button("Fermer visuels", key=f"close_png_{idx}_{date}"):
                         st.session_state[f"show_png_{idx}_{date}"] = False
 
-                # AFFICHAGE BRIEF
+                                # AFFICHAGE BRIEF
                 if st.session_state.get(f"show_brief_{idx}_{date}"):
                     brief = st.session_state.get(f"brief_{idx}_{date}","")
-                    texte_canva = st.session_state.get(f"texte_{idx}_{date}","")
                     st.markdown("---")
                     st.markdown('<div style="background:#FBF8F6;border:1px solid #EDD9CF;border-left:4px solid #C77A5C;border-radius:12px;padding:20px;">', unsafe_allow_html=True)
-                    if support not in ["BD", "Infographie"]:
-                        st.markdown("**Texte a copier dans Canva :**")
-                        st.code(texte_canva, language=None)
-                        col_c1, col_c2, col_c3 = st.columns(3)
-                        with col_c1:
-                            st.download_button("📋 Texte", data=texte_canva, file_name=f"texte_{date}_{support}.txt", mime="text/plain", key=f"dl_txt_{idx}_{date}")
-                        with col_c2:
-                            st.link_button("🎨 Ouvrir Canva", url=lien_canva(support), use_container_width=True)
-                        with col_c3:
-                            st.download_button("📄 Brief", data=brief, file_name=f"brief_{date}_{support}.txt", mime="text/plain", key=f"dl_br_{idx}_{date}")
-                    else:
-                        st.markdown("**Prompt pour ChatGPT / Microsoft Designer :**")
-                        st.download_button("📄 Telecharger le prompt", data=brief, file_name=f"prompt_{support}_{date}.txt", mime="text/plain", key=f"dl_br_{idx}_{date}")
+                    st.markdown("**Prompt pour creation :**")
+                    st.download_button("📄 Telecharger le prompt", data=brief, file_name=f"prompt_{support}_{date}.txt", mime="text/plain", key=f"dl_br_{idx}_{date}")
                     st.markdown("**Instructions :**")
                     st.markdown(brief)
                     if st.button("Fermer", key=f"close_br_{idx}_{date}"):
