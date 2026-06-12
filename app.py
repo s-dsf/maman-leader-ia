@@ -208,7 +208,6 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # ── L'ÉQUIPE ─────────────────────────────────────────────
 st.markdown("### L'équipe")
-
 agents_ordre = [
     ("marketing",  "Directrice Marketing",  "Stratégie & analyse"),
     ("editoriale", "Directrice Éditoriale", "Architecture & structure"),
@@ -216,36 +215,34 @@ agents_ordre = [
     ("da",         "Directrice Artistique", "Cohérence visuelle"),
     ("maquette",   "Maquettiste",           "Mise en page éditoriale"),
 ]
-
-cols = st.columns(5)
+cols = st.columns(5, gap="large")
 for col, (key, nom, role_court) in zip(cols, agents_ordre):
     with col:
-        img = charger_image(key)
-        if img:
-            st.image(img, width=120, use_container_width=False)
-        else:
-            st.markdown("""
-            <div style="width:110px;height:110px;margin:0 auto;
-                        border-radius:50%;background:#FAEAE3;
-                        border:2px solid #EDD9CF;display:flex;
-                        align-items:center;justify-content:center;
-                        font-size:32px;">✦</div>
-            """, unsafe_allow_html=True)
-        st.markdown(f'<div class="agent-nom">{nom}</div>',
-                    unsafe_allow_html=True)
-        st.markdown(f'<div class="agent-role">{role_court}</div>',
-                    unsafe_allow_html=True)
-        st.markdown('<div style="text-align:center;margin-bottom:8px;">'
-                    '<span class="badge">✦ Disponible</span></div>',
-                    unsafe_allow_html=True)
-        if st.button("Ouvrir", key=f"open_{key}",
-                     use_container_width=True):
-            st.session_state["agent_actif"] = key
-            st.switch_page("pages/agent.py")
-
-st.markdown("<hr/>", unsafe_allow_html=True)
-
-# ── MISSIONS & LIVRABLES ─────────────────────────────────
+        with st.container(border=True):
+            img = charger_image(key)
+            if img:
+                st.image(img, width=160, use_container_width=False)
+            else:
+                st.markdown("""
+                <div style="width:150px;height:150px;margin:0 auto;
+                            border-radius:50%;background:#FAEAE3;
+                            border:2px solid #EDD9CF;display:flex;
+                            align-items:center;justify-content:center;
+                            font-size:40px;">✦</div>
+                """, unsafe_allow_html=True)
+            st.markdown("<br/>", unsafe_allow_html=True)
+            st.markdown(f'<div class="agent-nom" style="font-size:20px;text-align:center;">{nom}</div>',
+                        unsafe_allow_html=True)
+            st.markdown(f'<div class="agent-role" style="text-align:center;margin-bottom:8px;">{role_court}</div>',
+                        unsafe_allow_html=True)
+            st.markdown('<div style="text-align:center;margin-bottom:12px;">'
+                        '<span class="badge">✦ Disponible</span></div>',
+                        unsafe_allow_html=True)
+            if st.button("Ouvrir", key=f"open_{key}",
+                         use_container_width=True):
+                st.session_state["agent_actif"] = key
+                st.switch_page("pages/agent.py")
+st.markdown("<hr/>", unsafe_allow_html=True)# ── MISSIONS & LIVRABLES ─────────────────────────────────
 col_m1, col_m2 = st.columns([1, 1])
 
 with col_m1:
