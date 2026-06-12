@@ -46,6 +46,6 @@ def upload_png(filepath: str, filename: str = None) -> dict:
     return {
         "file_id": file_id,
         "url_publique": f"https://drive.google.com/file/d/{file_id}/view",
-        "url_directe": f"https://drive.google.com/uc?id={file_id}",
+        "url_directe": f"https://lh3.googleusercontent.com/d/{file_id}",
         "filename": filename
     }

@@ -26,7 +26,7 @@ def charger_image(key):
         return Image.open(chemin)
     return None
 
-def upload_vers_drive(filepath: str, filename: str = None) -> dict | None:
+def upload_vers_drive(filepath: str, filename: str = None):
     try:
         from drive_upload import upload_png
         result = upload_png(filepath, filename)
@@ -216,7 +216,6 @@ def generer_png_carrousel(post):
     couleur_cover = couleur_unique
     couleur_slides = couleur_unique
     slides_textes = []
-    # Découpe sur les "Slide N" même sur une seule ligne
     morceaux = re.split(r'Slide\s*\d+\s*[:/]?\s*', contenu)
     for morceau in morceaux:
         texte = morceau.strip().replace('\n', ' ')
@@ -344,6 +343,8 @@ Propose des situations entierement nouvelles.
 
 """
     prompt = f"""Tu generes un calendrier editorial Instagram pour Maman & Leader.
+
+IMPORTANT : Ecris en francais correct avec tous les accents (e accent aigu/grave, c cedille, etc.). N'utilise jamais de texte sans accents.
 
 DONNEES :
 {historique_section}Intention : {intention_data.get('Intentions marketing','')}
@@ -594,11 +595,12 @@ Pilier : A tes cotes ou Structurer sans s'epuiser"""
 
 # ONGLET 2 — VALIDER
 with tab_val:
-    source = st.radio("Source des posts", ["Posts generes (session en cours)", "Charger depuis Airtable"], horizontal=True)
+    col_src, col_btn, col_sup, col_stat = st.columns([2, 2, 1.5, 1.5])
+    with col_src:
+        source = st.radio("Source", ["Posts generes (session en cours)", "Charger depuis Airtable"], horizontal=True, label_visibility="collapsed")
 
     if source == "Charger depuis Airtable":
-        col_l1, col_l2, col_l3 = st.columns(3)
-        with col_l1:
+        with col_btn:
             if st.button("Charger depuis Airtable", type="primary", use_container_width=True, key="btn_charger"):
                 with st.spinner("Chargement..."):
                     records, err = lire_airtable()
@@ -613,16 +615,15 @@ with tab_val:
                     posts_at_tries = sorted(posts_at, key=lambda x: x.get("Date", ""))
                     st.session_state["posts_validation"] = posts_at_tries
                     st.success(f"{len(posts_at_tries)} posts charges")
-        with col_l2:
+        with col_sup:
             filtre_support = st.selectbox("Support", ["Tous","Reel","Carrousel","Story","Infographie","BD"], key="filt_sup")
-        with col_l3:
+        with col_stat:
             filtre_statut = st.selectbox("Statut", ["Brouillon","Valide","Tous","Publie"], key="filt_stat")
         posts_a_valider = st.session_state.get("posts_validation", [])
     else:
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
+        with col_sup:
             filtre_support = st.selectbox("Support", ["Tous","Reel","Carrousel","Story","Infographie","BD"], key="filt_sup2")
-        with col_f2:
+        with col_stat:
             filtre_statut = st.selectbox("Statut", ["Brouillon","Valide","Tous","Publie"], key="filt_stat2")
         posts_session = st.session_state.get("calendrier_posts", [])
         for p in posts_session:
@@ -768,15 +769,14 @@ with tab_val:
 
                 with col_v1:
                     if support in ["Story", "Carrousel"]:
-                        if st.button(f"🖼️ Generer visuel {support}", key=f"btn_png_{idx}_{date}", use_container_width=True):
+                        label_btn = "🖼️ Modifier les visuels generes" if post.get("URLVisuel") else f"🖼️ Generer visuel {support}"
+                        if st.button(label_btn, key=f"btn_png_{idx}_{date}", use_container_width=True):
                             with st.spinner("Generation du visuel..."):
                                 try:
                                     if support == "Story":
                                         pngs = generer_png_story(post)
                                     else:
                                         pngs = generer_png_carrousel(post)
-
-                                    # Upload Drive automatique
                                     pngs_avec_drive = []
                                     for nom, png_bytes in pngs:
                                         filename = f"{nom}.png"
@@ -784,12 +784,57 @@ with tab_val:
                                         tmp_path.write_bytes(png_bytes)
                                         drive_result = upload_vers_drive(str(tmp_path), filename)
                                         pngs_avec_drive.append((nom, png_bytes, drive_result))
-
                                     st.session_state[f"pngs_{idx}_{date}"] = pngs_avec_drive
                                     st.session_state[f"show_png_{idx}_{date}"] = True
                                     st.success(f"{len(pngs)} visuel(s) genere(s) !")
                                 except Exception as e:
                                     st.error(f"Erreur : {str(e)[:200]}")
+
+                        if post.get("URLVisuel"):
+                            with st.form(key=f"form_visuel_{idx}_{date}"):
+                                demande_visuel = st.text_area("Demande de modification", placeholder="Hook plus court, ton plus doux...", height=60, key=f"dem_vis_{idx}")
+                                submit_visuel = st.form_submit_button("🔄 Regenerer avec IA")
+                                if submit_visuel:
+                                    if demande_visuel:
+                                        with st.spinner("Modification du texte..."):
+                                            try:
+                                                modifs = modifier_post_ia(post, demande_visuel)
+                                                for k, v in modifs.items():
+                                                    post[k] = v
+                                                if record_id:
+                                                    mettre_a_jour_airtable(record_id, modifs)
+                                            except Exception as e:
+                                                st.error(f"Erreur modification texte : {str(e)[:200]}")
+                                                st.stop()
+                                        with st.spinner("Regeneration des visuels..."):
+                                            try:
+                                                if support == "Story":
+                                                    pngs = generer_png_story(post)
+                                                else:
+                                                    pngs = generer_png_carrousel(post)
+                                                pngs_avec_drive = []
+                                                for nom, png_bytes in pngs:
+                                                    filename = f"{nom}.png"
+                                                    tmp_path = VISUELS_DIR / filename
+                                                    tmp_path.write_bytes(png_bytes)
+                                                    drive_result = upload_vers_drive(str(tmp_path), filename)
+                                                    pngs_avec_drive.append((nom, png_bytes, drive_result))
+                                                    if drive_result and record_id:
+                                                        urls_existantes = post.get("URLVisuel", "") or ""
+                                                        nouvelle_url = drive_result["url_directe"]
+                                                        if nouvelle_url not in urls_existantes.split("\n"):
+                                                            urls_combinees = (urls_existantes + "\n" + nouvelle_url).strip() if urls_existantes else nouvelle_url
+                                                            post["URLVisuel"] = urls_combinees
+                                                if record_id:
+                                                    mettre_a_jour_airtable(record_id, {"URLVisuel": post.get("URLVisuel", "")})
+                                                st.session_state[f"pngs_{idx}_{date}"] = pngs_avec_drive
+                                                st.session_state[f"show_png_{idx}_{date}"] = True
+                                                st.success("✦ Hook, contenu et visuels mis a jour !")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Erreur regeneration : {str(e)[:200]}")
+                                    else:
+                                        st.warning("Ecris ta demande.")
                     elif support in ["Reel", "BD", "Infographie"]:
                         st.markdown(f"**Upload {support}**")
                         uploaded = st.file_uploader(f"Fichier {support}", type=["mp4","mov","jpg","jpeg","png","gif"], key=f"upload_{idx}_{date}")
@@ -821,17 +866,33 @@ with tab_val:
                         else:
                             st.warning("Choisis une date.")
 
+                # VIGNETTES VISUELS DEJA GENERES (depuis Airtable)
+                urls_visuel_existant = post.get("URLVisuel", "")
+                if urls_visuel_existant:
+                    with st.expander("🖼️ Visuels deja generes", expanded=False):
+                        urls_list = [u.strip() for u in urls_visuel_existant.split("\n") if u.strip()]
+                        cols_vignettes = st.columns(min(len(urls_list), 4) or 1)
+                        for i, url_v in enumerate(urls_list):
+                            with cols_vignettes[i % len(cols_vignettes)]:
+                                try:
+                                    img_resp = requests.get(url_v, timeout=10)
+                                    if img_resp.status_code == 200:
+                                        st.image(img_resp.content, use_container_width=True)
+                                    else:
+                                        st.markdown(f"[Voir l'image]({url_v})")
+                                except Exception:
+                                    st.markdown(f"[Voir l'image]({url_v})")
+
                 # AFFICHAGE PNG
                 if st.session_state.get(f"show_png_{idx}_{date}"):
                     pngs_avec_drive = st.session_state.get(f"pngs_{idx}_{date}", [])
                     st.markdown("---")
                     st.markdown("**Visuels generes :**")
+                    urls_pour_publication = []
                     for nom, png_bytes, drive_result in pngs_avec_drive:
                         st.markdown(f"*{nom}*")
                         b64 = base64.b64encode(png_bytes).decode()
                         st.markdown(f'<div style="border:1px solid #EDD9CF;border-radius:8px;margin:8px 0;overflow:hidden;"><img src="data:image/png;base64,{b64}" style="width:100%;max-width:380px;"/></div>', unsafe_allow_html=True)
-
-                        # Liens Drive si disponibles
                         if drive_result:
                             st.markdown(f'''
                             <div class="drive-badge">
@@ -841,7 +902,7 @@ with tab_val:
                                 <a href="{drive_result["url_directe"]}" target="_blank" style="color:#2E7D32;">Lien direct</a>
                             </div>
                             ''', unsafe_allow_html=True)
-                            # Mise a jour Airtable avec toutes les URLs
+                            urls_pour_publication.append(drive_result["url_directe"])
                             if record_id:
                                 urls_existantes = post.get("URLVisuel", "") or ""
                                 nouvelle_url = drive_result["url_directe"]
@@ -849,13 +910,32 @@ with tab_val:
                                     urls_combinees = (urls_existantes + "\n" + nouvelle_url).strip() if urls_existantes else nouvelle_url
                                     post["URLVisuel"] = urls_combinees
                                     mettre_a_jour_airtable(record_id, {"URLVisuel": urls_combinees})
-
                         st.download_button(f"⬇️ {nom}.png", data=png_bytes, file_name=f"{nom}_{date}.png", mime="image/png", key=f"dl_{idx}_{date}_{nom}")
+
+                    st.markdown("---")
+                    if support == "Story" and urls_pour_publication:
+                        if st.button("📤 Publier sur Instagram (Story)", key=f"pub_ig_{idx}_{date}", use_container_width=True):
+                            from instagram_publish import publier_story
+                            with st.spinner("Publication en cours..."):
+                                ok_ig, msg_ig = publier_story(urls_pour_publication[0])
+                            if ok_ig:
+                                st.success(msg_ig)
+                            else:
+                                st.error(msg_ig)
+                    elif support == "Carrousel" and len(urls_pour_publication) >= 2:
+                        if st.button("📤 Publier sur Instagram (Carrousel)", key=f"pub_ig_{idx}_{date}", use_container_width=True):
+                            from instagram_publish import publier_carrousel
+                            with st.spinner("Publication en cours..."):
+                                ok_ig, msg_ig = publier_carrousel(urls_pour_publication, post.get("Caption", ""))
+                            if ok_ig:
+                                st.success(msg_ig)
+                            else:
+                                st.error(msg_ig)
 
                     if st.button("Fermer visuels", key=f"close_png_{idx}_{date}"):
                         st.session_state[f"show_png_{idx}_{date}"] = False
 
-                                # AFFICHAGE BRIEF
+                # AFFICHAGE BRIEF
                 if st.session_state.get(f"show_brief_{idx}_{date}"):
                     brief = st.session_state.get(f"brief_{idx}_{date}","")
                     st.markdown("---")
